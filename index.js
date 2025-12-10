@@ -51,6 +51,8 @@ async function run() {
     // Send a ping to confirm a successful connection
     const db = client.db('onlineTicket')
     const ticketsCollection = db.collection('tickets')
+    const bookingsCollection = db.collection('bookings');
+
 
     app.get('/tickets', verifyJWT, async (req, res) => {
       const cursor = ticketsCollection.find()
@@ -91,6 +93,58 @@ app.get('/ticket/:id', async (req, res) => {
   }
 })
 
+//User Dashboard - Bookings APIs
+app.post('/bookings', verifyJWT, async (req, res) => {
+  try {
+    const booking = req.body;
+
+    // Optional: check if ticket exists
+    const ticket = await ticketsCollection.findOne({ _id: new ObjectId(booking.ticketId) });
+    if (!ticket) return res.status(404).send({ message: "Ticket not found" });
+
+    // Optional: check if quantity is available
+    if (booking.quantity > ticket.ticket_quantity) {
+      return res.status(400).send({ message: "Not enough tickets available" });
+    }
+
+    // Reduce ticket quantity
+    await ticketsCollection.updateOne(
+      { _id: new ObjectId(booking.ticketId) },
+      { $inc: { ticket_quantity: -booking.quantity } }
+    );
+
+    // Add booking with "Pending" status
+    const result = await bookingsCollection.insertOne(booking);
+
+    res.send(result);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send({ message: 'Internal Server Error', error: err });
+  }
+});
+
+
+// Get specific user's bookings
+app.get("/bookings", verifyJWT, async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res.status(400).send({ message: "Email is required!" });
+    }
+
+    // Only allow logged user to see own bookings
+    if (email !== req.tokenEmail) {
+      return res.status(403).send({ message: "Forbidden!" });
+    }
+
+    const result = await bookingsCollection.find({ userEmail: email }).toArray();
+    res.send(result);
+  } catch (error) {
+    console.log(error);
+    res.status(500).send({ message: "Failed to fetch bookings" });
+  }
+});
 
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
