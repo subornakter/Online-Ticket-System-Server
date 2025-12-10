@@ -65,7 +65,31 @@ async function run() {
       res.send(result)
     })
 
+//    app.get('/ticket/:id', verifyJWT, async (req, res) => {
+//   const id = req.params.id;
+//   const result = await ticketsCollection.findOne({ _id: new ObjectId(id) });
+//   res.send(result);
+// });
+const { ObjectId } = require('mongodb')
 
+// Single Ticket Details API
+app.get('/ticket/:id', async (req, res) => {
+  try {
+    const id = req.params.id
+    const query = { _id: new ObjectId(id) } // convert to ObjectId
+
+    const ticket = await ticketsCollection.findOne(query)
+
+    if (!ticket) {
+      return res.status(404).send({ message: "Ticket not found" })
+    }
+
+    res.send(ticket)
+  } catch (error) {
+    console.log("Error fetching ticket:", error)
+    res.status(500).send({ message: "Internal Server Error", error })
+  }
+})
 
 
     await client.db("admin").command({ ping: 1 });
