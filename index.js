@@ -2,7 +2,9 @@ const express = require('express')
 const cors = require('cors')
 const { MongoClient, ServerApiVersion } = require('mongodb')
 const port = process.env.PORT || 3000
+
 require('dotenv').config()
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const app = express()
 const admin = require('firebase-admin')
 // Firebase Admin Initialization
@@ -145,6 +147,49 @@ app.get("/bookings", verifyJWT, async (req, res) => {
     res.status(500).send({ message: "Failed to fetch bookings" });
   }
 });
+
+// Payment Intent API
+app.post("/create-checkout-session", verifyJWT, async (req, res) => {
+  try {
+    const booking = req.body; // your paymentInfo from frontend
+ console.log(booking);
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: booking.title,
+              images: [booking.image], // optional
+            },
+            unit_amount: booking.price * 100, // convert to cents
+          },
+          quantity: booking.quantity,
+        },
+      ],
+      // user_email: booking.userEmail,
+      mode: "payment",
+      // success_url: `${process.env.CLIENT_URL}/dashboard/my-bookings?success=true`,
+     success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_URL}/dashboard/my-bookings?canceled=true`,
+        customer_email: booking.userEmail,
+      metadata: {
+  bookingId: booking._id.toString(),
+  title: booking.title,
+  userEmail: booking.userEmail,
+},
+    });
+
+    res.send({ url: session.url });
+  } catch (err) {
+    console.log(err);
+    res.status(500).send({ error: err.message });
+  }
+});
+
+
+
 
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
