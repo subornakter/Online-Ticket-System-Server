@@ -76,6 +76,55 @@ async function run() {
 //   const result = await ticketsCollection.findOne({ _id: new ObjectId(id) });
 //   res.send(result);
 // });
+
+// Get tickets added by a vendor
+app.get("/my-tickets", verifyJWT, async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res.status(400).send({ message: "Email required" });
+    }
+
+    // prevent unauthorized access
+    if (email !== req.tokenEmail) {
+      return res.status(403).send({ message: "Forbidden" });
+    }
+
+    const result = await ticketsCollection
+      .find({ "seller.email": email })
+      .sort({ _id: -1 })
+      .toArray();
+
+    res.send(result);
+  } catch (error) {
+    console.log(error);
+    res.status(500).send({ message: "Server error" });
+  }
+});
+
+app.delete("/ticket/:id", verifyJWT, async (req, res) => {
+  const id = req.params.id;
+
+  const result = await ticketsCollection.deleteOne({
+    _id: new ObjectId(id),
+  });
+
+  res.send(result);
+});
+app.put("/ticket/:id", verifyJWT, async (req, res) => {
+  const id = req.params.id;
+  const data = req.body;
+
+  const result = await ticketsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: data }
+  );
+
+  res.send(result);
+});
+
+
 const { ObjectId } = require('mongodb')
 
 // Single Ticket Details API
