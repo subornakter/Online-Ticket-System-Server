@@ -16,7 +16,11 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 })
 // Middleware
-app.use(cors())
+app.use(cors({
+  origin: "http://localhost:5173",
+  credentials: true
+}))
+
 app.use(express.json())
 
 // jwt middlewares
@@ -55,6 +59,7 @@ async function run() {
     const ticketsCollection = db.collection('tickets')
     const bookingsCollection = db.collection('bookings');
     const paymentsCollection = db.collection("payments");
+    const usersCollection = db.collection('users')
 
 
 
@@ -147,32 +152,123 @@ app.get('/ticket/:id', async (req, res) => {
 })
 
 //User Dashboard - Bookings APIs
+// app.post('/bookings', verifyJWT, async (req, res) => {
+//   try {
+//     const booking = req.body;
+
+//     // Optional: check if ticket exists
+//     const ticket = await ticketsCollection.findOne({ _id: new ObjectId(booking.ticketId) });
+//     if (!ticket) return res.status(404).send({ message: "Ticket not found" });
+
+//     // Optional: check if quantity is available
+//     if (booking.quantity > ticket.ticket_quantity) {
+//       return res.status(400).send({ message: "Not enough tickets available" });
+//     }
+
+//     // Reduce ticket quantity
+//     await ticketsCollection.updateOne(
+//       { _id: new ObjectId(booking.ticketId) },
+//       { $inc: { ticket_quantity: -booking.quantity } }
+//     );
+
+//     // Add booking with "Pending" status
+//     const result = await bookingsCollection.insertOne(booking);
+
+//     res.send(result);
+//   } catch (err) {
+//     console.log(err);
+//     res.status(500).send({ message: 'Internal Server Error', error: err });
+//   }
+// });
 app.post('/bookings', verifyJWT, async (req, res) => {
   try {
     const booking = req.body;
 
-    // Optional: check if ticket exists
     const ticket = await ticketsCollection.findOne({ _id: new ObjectId(booking.ticketId) });
     if (!ticket) return res.status(404).send({ message: "Ticket not found" });
 
-    // Optional: check if quantity is available
     if (booking.quantity > ticket.ticket_quantity) {
       return res.status(400).send({ message: "Not enough tickets available" });
     }
 
-    // Reduce ticket quantity
     await ticketsCollection.updateOne(
       { _id: new ObjectId(booking.ticketId) },
       { $inc: { ticket_quantity: -booking.quantity } }
     );
 
-    // Add booking with "Pending" status
-    const result = await bookingsCollection.insertOne(booking);
+    // ADD these extra fields ⬇️
+    const newBooking = {
+      ...booking,
+      ticketTitle: ticket.title,
+      ticketUnitPrice: ticket.price,
+      ticketSellerEmail: ticket.seller.email,
+      status: "pending",
+      createdAt: new Date()
+    };
+
+    const result = await bookingsCollection.insertOne(newBooking);
 
     res.send(result);
   } catch (err) {
     console.log(err);
     res.status(500).send({ message: 'Internal Server Error', error: err });
+  }
+});
+
+app.get("/vendor/bookings", verifyJWT, async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res.status(400).send({ message: "Email is required" });
+    }
+
+    // Vendors can only view their own ticket bookings
+    if (email !== req.tokenEmail) {
+      return res.status(403).send({ message: "Forbidden!" });
+    }
+
+    const result = await bookingsCollection
+      .find({ ticketSellerEmail: email, status: "pending" })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send(result);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send({ message: "Server Error" });
+  }
+});
+
+app.patch("/vendor/booking/accept/:id", verifyJWT, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await bookingsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "accepted" } }
+    );
+
+    res.send(result);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send({ message: "Server Error" });
+  }
+});
+
+app.patch("/vendor/booking/reject/:id", verifyJWT, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await bookingsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "rejected" } }
+    );
+
+    res.send(result);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send({ message: "Server Error" });
   }
 });
 
@@ -316,6 +412,46 @@ app.get("/transactions", verifyJWT, async (req, res) => {
   }
 });
 
+  // save or update a user in db
+    app.post('/user', async (req, res) => {
+      const userData = req.body
+      userData.created_at = new Date().toISOString()
+      userData.last_loggedIn = new Date().toISOString()
+      userData.role = 'customer'
+
+      const query = {
+        email: userData.email,
+      }
+
+      const alreadyExists = await usersCollection.findOne(query)
+      console.log('User Already Exists---> ', !!alreadyExists)
+
+      if (alreadyExists) {
+        console.log('Updating user info......')
+        const result = await usersCollection.updateOne(query, {
+          $set: {
+            last_loggedIn: new Date().toISOString(),
+          },
+        })
+        return res.send(result)
+      }
+
+      console.log('Saving new user info......')
+      const result = await usersCollection.insertOne(userData)
+      res.send(result)
+    })
+
+  app.get('/user/role', verifyJWT, async (req, res) => {
+  const email = req.query.email;
+
+  if (!email) {
+    return res.status(400).send({ error: "Email missing in request" });
+  }
+
+  const user = await usersCollection.findOne({ email });
+
+  res.send({ role: user?.role || "user" });
+});
 
 
 
