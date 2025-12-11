@@ -54,6 +54,8 @@ async function run() {
     const db = client.db('onlineTicket')
     const ticketsCollection = db.collection('tickets')
     const bookingsCollection = db.collection('bookings');
+    const paymentsCollection = db.collection("payments");
+
 
 
     app.get('/tickets', verifyJWT, async (req, res) => {
@@ -185,6 +187,83 @@ app.post("/create-checkout-session", verifyJWT, async (req, res) => {
   } catch (err) {
     console.log(err);
     res.status(500).send({ error: err.message });
+  }
+});
+
+app.post("/payment-success", async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+
+    // Retrieve Stripe session
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    // Get booking ID from metadata
+    const bookingId = session.metadata.bookingId;
+
+    // Find this booking
+    const booking = await bookingsCollection.findOne({
+      _id: new ObjectId(bookingId)
+    });
+
+    if (!booking) {
+      return res.status(404).send({ message: "Booking not found" });
+    }
+
+    // Prevent duplicate transaction
+    const existingPayment = await paymentsCollection.findOne({
+      transactionId: session.payment_intent,
+    });
+
+    // Save only once
+    if (!existingPayment) {
+      const paymentData = {
+        transactionId: session.payment_intent,
+        email: booking.userEmail,
+        amount: session.amount_total / 100,
+        title: booking.title,
+        date: new Date(),
+      };
+
+      await paymentsCollection.insertOne(paymentData);
+
+      // Update booking status → paid
+      await bookingsCollection.updateOne(
+        { _id: new ObjectId(bookingId) },
+        { $set: { status: "paid" } }
+      );
+    }
+
+    res.send({ success: true });
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).send({ error: "Payment processing failed" });
+  }
+});
+
+
+app.get("/transactions", verifyJWT, async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res.status(400).send({ message: "Email is required" });
+    }
+
+    if (email !== req.tokenEmail) {
+      return res.status(403).send({ message: "Forbidden" });
+    }
+
+    const result = await paymentsCollection
+      .find({ email: email })   
+      .sort({ date: -1 })       // newest first
+      .toArray();
+
+    res.send(result);
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).send({ message: "Server error" });
   }
 });
 
