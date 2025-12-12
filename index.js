@@ -88,10 +88,24 @@ async function run() {
     /* ---------------------------
          Admin - Manage Users
     ----------------------------*/
-    app.get("/admin/users", verifyJWT, verifyAdmin, async (req, res) => {
-      const result = await users.find().toArray();
-      res.send(result);
-    });
+   app.get("/admin/users", verifyJWT, verifyAdmin, async (req, res) => {
+  try {
+    const adminEmail = req.tokenEmail;
+
+    // সব ইউজার নিয়ে এসো
+    const allUsers = await users.find().toArray();
+
+    // নিজের অ্যাকাউন্ট বাদ দাও
+    const filteredUsers = allUsers.filter(u => u.email !== adminEmail);
+
+    res.send(filteredUsers);
+
+  } catch (err) {
+    console.log("Error fetching users:", err);
+    res.status(500).send({ message: "Failed to fetch users" });
+  }
+});
+
 
     app.patch("/admin/make-admin/:email", verifyJWT, verifyAdmin, async (req, res) => {
       const email = req.params.email;
