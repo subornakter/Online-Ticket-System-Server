@@ -92,10 +92,9 @@ async function run() {
   try {
     const adminEmail = req.tokenEmail;
 
-    // সব ইউজার নিয়ে এসো
     const allUsers = await users.find().toArray();
 
-    // নিজের অ্যাকাউন্ট বাদ দাও
+  
     const filteredUsers = allUsers.filter(u => u.email !== adminEmail);
 
     res.send(filteredUsers);
@@ -182,6 +181,30 @@ async function run() {
   res.send(updated);
 });
 
+// SEARCH TICKETS
+app.get("/tickets/search", verifyJWT, async (req, res) => {
+  try {
+    const { from, to, date } = req.query;
+
+    console.log("Search Query:", from, to, date);
+
+    const query = {};
+
+    if (from) query.from = { $regex: from, $options: "i" };
+    if (to) query.to = { $regex: to, $options: "i" };
+    if (date) query.departure_date_time = { $regex: date, $options: "i" };
+
+    const result = await tickets.find(query).toArray();
+
+    res.send(result);
+
+  } catch (err) {
+    console.log("Search error:", err);
+    res.status(500).send({ message: "Search failed", error: err });
+  }
+});
+
+
 
     app.get("/advertised-tickets", async (req, res) => {
       const result = await tickets.find({ advertise: true, status: "approved" }).limit(10).toArray();
@@ -198,6 +221,16 @@ async function run() {
       const result = await tickets.insertOne(ticket);
       res.send(result);
     });
+
+app.get("/tickets", async (req, res) => {
+  const result = await tickets.find({ status: "approved" })
+    .sort({ _id: -1 })  // latest first
+    .limit(8)           // only 6–8 tickets
+    .toArray();
+
+  res.send(result);
+});
+
 
     app.get("/my-tickets", verifyJWT, async (req, res) => {
       const email = req.query.email;
