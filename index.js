@@ -154,12 +154,34 @@ async function run() {
       res.send(result);
     });
 
+    // app.patch("/admin/ticket/advertise/:id", verifyJWT, verifyAdmin, async (req, res) => {
+    //   const id = req.params.id;
+    //   const { advertise } = req.body;
+    //   const result = await tickets.updateOne({ _id: new ObjectId(id) }, { $set: { advertise } });
+    //   res.send(result);
+    // });
     app.patch("/admin/ticket/advertise/:id", verifyJWT, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const { advertise } = req.body;
-      const result = await tickets.updateOne({ _id: new ObjectId(id) }, { $set: { advertise } });
-      res.send(result);
-    });
+  const id = req.params.id;
+  const { advertise } = req.body;
+
+  // COUNT how many tickets are already advertised
+  const advertisedCount = await tickets.countDocuments({ advertise: true });
+
+  // If admin wants to advertise and limit reached
+  if (advertise === true && advertisedCount >= 6) {
+    return res.status(400).send({ message: "You cannot advertise more than 6 tickets!" });
+  }
+
+  await tickets.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { advertise } }
+  );
+
+  const updated = await tickets.findOne({ _id: new ObjectId(id) });
+
+  res.send(updated);
+});
+
 
     app.get("/advertised-tickets", async (req, res) => {
       const result = await tickets.find({ advertise: true, status: "approved" }).limit(10).toArray();
