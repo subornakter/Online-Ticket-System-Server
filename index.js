@@ -280,27 +280,33 @@ app.get("/tickets", async (req, res) => {
     });
 
     // Create booking
-    app.post("/bookings", verifyJWT, async (req, res) => {
-      const booking = req.body;
-      const ticket = await tickets.findOne({ _id: new ObjectId(booking.ticketId) });
-      if (!ticket) return res.status(404).send({ message: "Ticket not found" });
-      if (booking.quantity > ticket.ticket_quantity) return res.status(400).send({ message: "Not enough tickets available" });
+  app.post("/bookings", verifyJWT, async (req, res) => {
+  const booking = req.body;
 
-      await tickets.updateOne({ _id: new ObjectId(booking.ticketId) }, { $inc: { ticket_quantity: -booking.quantity } });
+  const ticket = await tickets.findOne({
+    _id: new ObjectId(booking.ticketId),
+  });
 
-      const newBooking = {
-        ...booking,
-        userEmail: req.tokenEmail,
-        ticketTitle: ticket.title,
-        ticketUnitPrice: ticket.price,
-        ticketSellerEmail: ticket.seller.email,
-        status: "pending",
-        createdAt: new Date(),
-      };
+  if (!ticket)
+    return res.status(404).send({ message: "Ticket not found" });
 
-      const result = await bookings.insertOne(newBooking);
-      res.send(result);
-    });
+  if (booking.quantity > ticket.ticket_quantity)
+    return res.status(400).send({ message: "Not enough tickets available" });
+
+  const newBooking = {
+    ...booking,
+    userEmail: req.tokenEmail,
+    ticketTitle: ticket.title,
+    ticketUnitPrice: ticket.price,
+    ticketSellerEmail: ticket.seller.email,
+    status: "pending",
+    createdAt: new Date(),
+  };
+
+  const result = await bookings.insertOne(newBooking);
+  res.send(result);
+});
+
 
     // Get bookings for logged-in user
     app.get("/my-bookings", verifyJWT, async (req, res) => {
@@ -399,56 +405,73 @@ app.get("/vendor/revenue-overview", verifyJWT, async (req, res) => {
       res.send({ url: session.url });
     });
 
+// ---------------------------
+// Stripe Payment Success
+// ---------------------------
 app.post("/payment-success", async (req, res) => {
   try {
     const { sessionId } = req.body;
 
-    // Retrieve Stripe session
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (!sessionId) return res.status(400).send({ message: "Session ID is required" });
 
-    // Get booking ID from metadata
+    // Retrieve session from Stripe
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
     const bookingId = session.metadata.bookingId;
 
-    // Find this booking
-    const booking = await bookings.findOne({
-      _id: new ObjectId(bookingId)
-    });
+    if (!bookingId) return res.status(400).send({ message: "Booking ID missing in session metadata" });
 
-    if (!booking) {
-      return res.status(404).send({ message: "Booking not found" });
+    // Find booking in DB
+    const booking = await bookings.findOne({ _id: new ObjectId(bookingId) });
+    if (!booking) return res.status(404).send({ message: "Booking not found" });
+
+    // Prevent double payment
+    if (booking.status === "paid") {
+      return res.send({ success: true, message: "Payment already processed" });
     }
 
-    // Prevent duplicate transaction
-    const existingPayment = await payments.findOne({
-      transactionId: session.payment_intent,
-    });
-
-    // Save only once
-    if (!existingPayment) {
-      const paymentData = {
-        transactionId: session.payment_intent,
-        email: booking.userEmail,
-        amount: session.amount_total / 100,
-        title: booking.title,
-        date: new Date(),
-      };
-
-      await payments.insertOne(paymentData);
-
-      // Update booking status → paid
+    // Check if payment already recorded in payments collection
+    const existingPayment = await payments.findOne({ transactionId: session.payment_intent });
+    if (existingPayment) {
+      // Just update booking status to paid if somehow missed
       await bookings.updateOne(
         { _id: new ObjectId(bookingId) },
         { $set: { status: "paid" } }
       );
+      return res.send({ success: true, message: "Payment already exists" });
     }
 
-    res.send({ success: true });
+    // Save payment info
+    await payments.insertOne({
+      transactionId: session.payment_intent,
+      email: booking.userEmail,
+      amount: session.amount_total / 100,
+      title: booking.ticketTitle,
+      date: new Date(),
+      quantity: booking.quantity,
+    });
 
+    // Update booking status
+    await bookings.updateOne(
+      { _id: new ObjectId(bookingId) },
+      { $set: { status: "paid" } }
+    );
+
+    // Reduce ticket quantity
+    await tickets.updateOne(
+      { _id: new ObjectId(booking.ticketId) },
+      { $inc: { ticket_quantity: -booking.quantity } }
+    );
+
+    res.send({ success: true, message: "Payment processed successfully" });
   } catch (err) {
-    console.log(err);
-    res.status(500).send({ error: "Payment processing failed" });
+    console.log("Payment success error:", err);
+    res.status(500).send({ error: "Payment processing failed", details: err.message });
   }
 });
+
+
+
+
 
 
 
