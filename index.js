@@ -496,6 +496,135 @@ app.get("/transactions", verifyJWT, async (req, res) => {
   }
 });
 
+app.get("/dashboard/customer-stats", verifyJWT, async (req, res) => {
+  try {
+    const email = req.tokenEmail;
+
+    const totalBookings = await bookings.countDocuments({
+      userEmail: email,
+    });
+
+    const userPayments = await payments.find({ email }).toArray();
+
+    const totalSpent = userPayments.reduce(
+      (sum, p) => sum + p.amount,
+      0
+    );
+
+    res.send({
+      totalBookings,
+      totalPayments: userPayments.length,
+      totalSpent,
+    });
+  } catch (err) {
+    console.log("Customer stats error:", err);
+    res.status(500).send({ message: "Failed to load stats" });
+  }
+});
+
+app.get("/admin/stats", verifyJWT, verifyAdmin, async (req, res) => {
+  try {
+    const totalUsers = await users.countDocuments();
+    // রোল অনুযায়ী ইউজার সংখ্যা বের করা
+    const adminCount = await users.countDocuments({ role: "admin" });
+    const vendorCount = await users.countDocuments({ role: "vendor" });
+    const customerCount = await users.countDocuments({ role: "customer" });
+    const fraudCount = await users.countDocuments({ role: "fraud" });
+
+    // টিকিট স্ট্যাটাস অনুযায়ী সংখ্যা (রেভিনিউ এর বদলে এটি চার্টে দেখাবো)
+    const approvedTickets = await tickets.countDocuments({ status: "approved" });
+    const pendingTickets = await tickets.countDocuments({ status: "pending" });
+    const rejectedTickets = await tickets.countDocuments({ status: "rejected" });
+
+    res.send({ 
+      totalUsers, 
+      adminCount, 
+      vendorCount, 
+      customerCount, 
+      fraudCount,
+      approvedTickets,
+      pendingTickets,
+      rejectedTickets,
+      totalRevenue: (await payments.find().toArray()).reduce((sum, p) => sum + p.amount, 0)
+    });
+  } catch (err) {
+    res.status(500).send({ message: "Failed to fetch admin stats" });
+  }
+});
+
+// Vendor Stats Route
+app.get("/vendor/stats/:email", verifyJWT, async (req, res) => {
+  try {
+    const vendorEmail = req.params.email;
+   // Transport type stats
+const transportTypes = ["bus", "plane", "launch", "train"];
+const transportStats = [];
+
+for (const type of transportTypes) {
+  const count = await tickets.countDocuments({
+    "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" },
+    transport_type: { $regex: `^${type}$`, $options: "i" }
+  });
+  transportStats.push({ type, count });
+}
+
+    // Security check: only logged-in vendor can fetch their stats
+    if (vendorEmail !== req.tokenEmail) 
+      return res.status(403).send({ message: "Forbidden" });
+
+    // ✅ Count all tickets added by vendor
+    const totalTicketsAdded = await tickets.countDocuments({
+      "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" }
+    });
+
+    // ✅ Tickets by status (case-insensitive)
+    const approvedTickets = await tickets.countDocuments({
+      "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" },
+      status: { $regex: /^approved$/i }
+    });
+
+   const pendingTickets = await tickets.countDocuments({
+  "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" }, // case-insensitive email
+  status: { $regex: /^pending$/i } // case-insensitive status
+});
+
+    // ✅ Booking stats
+    const allBookings = await bookings.find({ ticketSellerEmail: vendorEmail }).toArray();
+
+    const paidBookings = allBookings.filter(
+      b => b.status.toLowerCase() === "paid"
+    );
+
+    const pendingBookings = allBookings.filter(
+      b => b.status.toLowerCase() === "pending" || b.status.toLowerCase() === "accepted"
+    );
+
+    // ✅ Total sold quantity and revenue
+    const totalSoldQuantity = paidBookings.reduce((sum, b) => sum + b.quantity, 0);
+    const totalRevenue = paidBookings.reduce((sum, b) => sum + (b.ticketUnitPrice * b.quantity), 0);
+
+    // ✅ Send response
+    res.send({
+      totalTicketsAdded,
+      approvedTickets,
+      pendingTickets,
+      totalSoldQuantity,
+      totalRevenue,
+      bookingStats: [
+        { name: "Paid Sales", value: paidBookings.length },
+        { name: "Unpaid/Pending", value: pendingBookings.length }
+      ],
+        transportStats 
+    });
+
+  } catch (err) {
+    console.error("Vendor stats error:", err);
+    res.status(500).send({ message: "Failed to fetch vendor stats", error: err.message });
+  }
+});
+
+
+
 
     console.log("Server Connected ✔");
   } catch (err) {
