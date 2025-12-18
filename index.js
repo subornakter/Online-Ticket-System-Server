@@ -10,8 +10,9 @@ const port = process.env.PORT || 3000;
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: true,
     credentials: true,
+    optionSuccessStatus: 200,
   })
 );
 app.use(express.json());
@@ -44,7 +45,7 @@ const client = new MongoClient(uri, { serverApi: ServerApiVersion.v1 });
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     const db = client.db("onlineTicket");
     const tickets = db.collection("tickets");
     const bookings = db.collection("bookings");
@@ -525,13 +526,13 @@ app.get("/dashboard/customer-stats", verifyJWT, async (req, res) => {
 app.get("/admin/stats", verifyJWT, verifyAdmin, async (req, res) => {
   try {
     const totalUsers = await users.countDocuments();
-    // রোল অনুযায়ী ইউজার সংখ্যা বের করা
+  
     const adminCount = await users.countDocuments({ role: "admin" });
     const vendorCount = await users.countDocuments({ role: "vendor" });
     const customerCount = await users.countDocuments({ role: "customer" });
     const fraudCount = await users.countDocuments({ role: "fraud" });
 
-    // টিকিট স্ট্যাটাস অনুযায়ী সংখ্যা (রেভিনিউ এর বদলে এটি চার্টে দেখাবো)
+  
     const approvedTickets = await tickets.countDocuments({ status: "approved" });
     const pendingTickets = await tickets.countDocuments({ status: "pending" });
     const rejectedTickets = await tickets.countDocuments({ status: "rejected" });
@@ -632,6 +633,9 @@ for (const type of transportTypes) {
   }
 }
 run();
+app.get('/', (req, res) => {
+  res.send('Hello from Server..')
+})
 
 app.listen(port, () => {
   console.log("Server running on port", port);
