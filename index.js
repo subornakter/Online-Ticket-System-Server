@@ -573,41 +573,32 @@ app.get("/admin/stats", verifyJWT, verifyAdmin, async (req, res) => {
 // Vendor Stats Route
 app.get("/vendor/stats/:email", verifyJWT, async (req, res) => {
   try {
-    const vendorEmail = req.params.email;
-   // Transport type stats
-const transportTypes = ["bus", "plane", "launch", "train"];
-const transportStats = [];
+    const vendorEmail = req.params.email.toLowerCase();
 
-for (const type of transportTypes) {
-  const count = await tickets.countDocuments({
-    "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" },
-    transport_type: { $regex: `^${type}$`, $options: "i" }
-  });
-  transportStats.push({ type, count });
-}
-
-    // Security check: only logged-in vendor can fetch their stats
-    if (vendorEmail !== req.tokenEmail) 
+    // Security check: only the logged-in vendor can access their stats
+    if (vendorEmail !== req.tokenEmail.toLowerCase())
       return res.status(403).send({ message: "Forbidden" });
 
-    // ✅ Count all tickets added by vendor
+    // ✅ Tickets added by vendor
     const totalTicketsAdded = await tickets.countDocuments({
       "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" }
     });
 
-    // ✅ Tickets by status (case-insensitive)
+    // ✅ Tickets by status
     const approvedTickets = await tickets.countDocuments({
       "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" },
       status: { $regex: /^approved$/i }
     });
 
-   const pendingTickets = await tickets.countDocuments({
-  "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" }, // case-insensitive email
-  status: { $regex: /^pending$/i } // case-insensitive status
-});
+    const pendingTickets = await tickets.countDocuments({
+      "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" },
+      status: { $regex: /^pending$/i }
+    });
 
-    // ✅ Booking stats
-    const allBookings = await bookings.find({ ticketSellerEmail: vendorEmail }).toArray();
+    // ✅ Bookings by this vendor
+    const allBookings = await bookings.find({
+      ticketSellerEmail: { $regex: `^${vendorEmail}$`, $options: "i" }
+    }).toArray();
 
     const paidBookings = allBookings.filter(
       b => b.status.toLowerCase() === "paid"
@@ -617,9 +608,23 @@ for (const type of transportTypes) {
       b => b.status.toLowerCase() === "pending" || b.status.toLowerCase() === "accepted"
     );
 
-    // ✅ Total sold quantity and revenue
+    // ✅ Total sold quantity and revenue (only paid bookings)
     const totalSoldQuantity = paidBookings.reduce((sum, b) => sum + b.quantity, 0);
-    const totalRevenue = paidBookings.reduce((sum, b) => sum + (b.ticketUnitPrice * b.quantity), 0);
+    const totalRevenue = paidBookings.reduce(
+      (sum, b) => sum + b.ticketUnitPrice * b.quantity,
+      0
+    );
+
+    // ✅ Transport type stats
+    const transportTypes = ["bus", "plane", "launch", "train"];
+    const transportStats = [];
+    for (const type of transportTypes) {
+      const count = await tickets.countDocuments({
+        "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" },
+        transport_type: { $regex: `^${type}$`, $options: "i" }
+      });
+      transportStats.push({ type, count });
+    }
 
     // ✅ Send response
     res.send({
@@ -632,7 +637,7 @@ for (const type of transportTypes) {
         { name: "Paid Sales", value: paidBookings.length },
         { name: "Unpaid/Pending", value: pendingBookings.length }
       ],
-        transportStats 
+      transportStats
     });
 
   } catch (err) {
@@ -640,6 +645,7 @@ for (const type of transportTypes) {
     res.status(500).send({ message: "Failed to fetch vendor stats", error: err.message });
   }
 });
+
 
 
 
