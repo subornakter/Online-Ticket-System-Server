@@ -52,6 +52,8 @@ async function run() {
     const payments = db.collection("payments");
     const users = db.collection("users");
 
+
+    await payments.createIndex({ transactionId: 1 }, { unique: true });
     /* ---------------------------
        Role Middleware (Admin)
     ----------------------------*/
@@ -280,9 +282,23 @@ app.get("/tickets", async (req, res) => {
       res.send(ticket);
     });
 
-    // Create booking
-  app.post("/bookings", verifyJWT, async (req, res) => {
+ app.post("/bookings", verifyJWT, async (req, res) => {
   const booking = req.body;
+  const userEmail = req.tokenEmail;
+
+  // Check existing unpaid booking
+  const existingBooking = await bookings.findOne({
+    userEmail,
+    ticketId: booking.ticketId,
+    status: { $in: ["pending", "accepted"] }
+  });
+
+  if (existingBooking) {
+    return res.send({
+      message: "Existing unpaid booking found",
+      existingBooking,
+    });
+  }
 
   const ticket = await tickets.findOne({
     _id: new ObjectId(booking.ticketId),
@@ -296,7 +312,7 @@ app.get("/tickets", async (req, res) => {
 
   const newBooking = {
     ...booking,
-    userEmail: req.tokenEmail,
+    userEmail,
     ticketTitle: ticket.title,
     ticketUnitPrice: ticket.price,
     ticketSellerEmail: ticket.seller.email,
@@ -307,6 +323,7 @@ app.get("/tickets", async (req, res) => {
   const result = await bookings.insertOne(newBooking);
   res.send(result);
 });
+
 
 
     // Get bookings for logged-in user
@@ -412,61 +429,61 @@ app.get("/vendor/revenue-overview", verifyJWT, async (req, res) => {
 app.post("/payment-success", async (req, res) => {
   try {
     const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).send({ message: "Session ID required" });
 
-    if (!sessionId) return res.status(400).send({ message: "Session ID is required" });
-
-    // Retrieve session from Stripe
+    // ১. স্ট্রাইপ থেকে সেশন রিট্রিভ করা
     const session = await stripe.checkout.sessions.retrieve(sessionId);
     const bookingId = session.metadata.bookingId;
+    const transactionId = session.payment_intent;
 
-    if (!bookingId) return res.status(400).send({ message: "Booking ID missing in session metadata" });
-
-    // Find booking in DB
-    const booking = await bookings.findOne({ _id: new ObjectId(bookingId) });
-    if (!booking) return res.status(404).send({ message: "Booking not found" });
-
-    // Prevent double payment
-    if (booking.status === "paid") {
-      return res.send({ success: true, message: "Payment already processed" });
-    }
-
-    // Check if payment already recorded in payments collection
-    const existingPayment = await payments.findOne({ transactionId: session.payment_intent });
+    // ২. চেক করা: এই ট্রানজ্যাকশন আইডি দিয়ে পেমেন্ট অলরেডি সেভ করা আছে কি না
+    const existingPayment = await payments.findOne({ transactionId });
     if (existingPayment) {
-      // Just update booking status to paid if somehow missed
-      await bookings.updateOne(
-        { _id: new ObjectId(bookingId) },
-        { $set: { status: "paid" } }
-      );
-      return res.send({ success: true, message: "Payment already exists" });
+      return res.send({ success: true, message: "Payment already recorded" });
     }
 
-    // Save payment info
-    await payments.insertOne({
-      transactionId: session.payment_intent,
+    // ৩. বুকিংটি খুঁজে বের করা এবং চেক করা এটি অলরেডি 'paid' কি না
+    const booking = await bookings.findOne({ _id: new ObjectId(bookingId) });
+    if (!booking || booking.status === "paid") {
+      return res.send({ success: true, message: "Booking already processed" });
+    }
+
+    // ৪. পেমেন্ট ডকুমেন্ট তৈরি
+    const paymentDoc = {
+      transactionId,
       email: booking.userEmail,
       amount: session.amount_total / 100,
       title: booking.ticketTitle,
       date: new Date(),
       quantity: booking.quantity,
-    });
+    };
 
-    // Update booking status
-    await bookings.updateOne(
-      { _id: new ObjectId(bookingId) },
-      { $set: { status: "paid" } }
-    );
+    // ৫. একসাথে পেমেন্ট সেভ করা এবং বুকিং স্ট্যাটাস আপডেট করা (Safe Execution)
+    try {
+      await payments.insertOne(paymentDoc);
+      
+      await bookings.updateOne(
+        { _id: new ObjectId(bookingId) },
+        { $set: { status: "paid" } }
+      );
 
-    // Reduce ticket quantity
-    await tickets.updateOne(
-      { _id: new ObjectId(booking.ticketId) },
-      { $inc: { ticket_quantity: -booking.quantity } }
-    );
+      await tickets.updateOne(
+        { _id: new ObjectId(booking.ticketId) },
+        { $inc: { ticket_quantity: -booking.quantity } }
+      );
 
-    res.send({ success: true, message: "Payment processed successfully" });
+      res.send({ success: true, message: "Payment processed successfully" });
+    } catch (insertErr) {
+      // যদি ইনডেক্স ইউনিক হওয়ার কারণে এরর দেয় (Duplicate)
+      if (insertErr.code === 11000) {
+        return res.send({ success: true, message: "Duplicate payment ignored" });
+      }
+      throw insertErr;
+    }
+
   } catch (err) {
-    console.log("Payment success error:", err);
-    res.status(500).send({ error: "Payment processing failed", details: err.message });
+    console.error("Payment success error:", err);
+    res.status(500).send({ error: "Processing failed", details: err.message });
   }
 });
 
