@@ -191,7 +191,7 @@ app.get("/tickets/search", verifyJWT, async (req, res) => {
 
     console.log("Search Query:", from, to, date);
 
-    const query = {};
+    const query = { status: "approved" };
 
     if (from) query.from = { $regex: from, $options: "i" };
     if (to) query.to = { $regex: to, $options: "i" };
@@ -225,14 +225,6 @@ app.get("/tickets/search", verifyJWT, async (req, res) => {
       res.send(result);
     });
 
-app.get("/tickets", async (req, res) => {
-  const result = await tickets.find({ status: "approved" })
-    .sort({ _id: -1 })  // latest first
-    .limit(8)           // only 6–8 tickets
-    .toArray();
-
-  res.send(result);
-});
 
 
     app.get("/my-tickets", verifyJWT, async (req, res) => {
@@ -274,6 +266,16 @@ app.get("/tickets", async (req, res) => {
       const result = await tickets.find({ status: "approved" }).sort({ _id: -1 }).toArray();
       res.send(result);
     });
+
+    app.get("/tickets/latest", async (req, res) => {
+  const result = await tickets.find({ status: "approved" })
+    .sort({ _id: -1 })  // latest first
+    .limit(8)           // only 6–8 tickets
+    .toArray();
+
+  res.send(result);
+});
+
 
     app.get("/ticket/:id", async (req, res) => {
       const id = req.params.id;
