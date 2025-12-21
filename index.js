@@ -10,7 +10,7 @@ const port = process.env.PORT || 3000;
 
 app.use(
   cors({
-    origin: true,
+    origin: [process.env.CLIENT_URL,'http://localhost:5173'],
     credentials: true,
     optionSuccessStatus: 200,
   })
@@ -397,33 +397,104 @@ app.get("/vendor/revenue-overview", verifyJWT, async (req, res) => {
     /* ---------------------------
               Stripe Payment
     ----------------------------*/
+    // app.post("/create-checkout-session", verifyJWT, async (req, res) => {
+    //   const info = req.body;
+    //   const booking = await bookings.findOne({ _id: new ObjectId(info._id) });
+    //   if (!booking) return res.status(404).send({ message: "Booking not found" });
+
+    //   if (booking.status !== "accepted") return res.status(400).send({ message: "Booking is not accepted yet" });
+    //   if (new Date(booking.departureTime) < new Date()) return res.status(400).send({ message: "Cannot pay, departure time passed" });
+
+    //   const session = await stripe.checkout.sessions.create({
+    //     payment_method_types: ["card"],
+    //     line_items: [{
+    //       price_data: {
+    //         currency: "usd",
+    //         unit_amount: info.price * 100,
+    //         product_data: { name: info.title, images: [info.image] }
+    //       },
+    //       quantity: info.quantity,
+    //     }],
+    //     mode: "payment",
+    //     success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+    //     cancel_url: `${process.env.CLIENT_URL}/dashboard/my-bookings`,
+    //     customer_email: info.userEmail,
+    //     metadata: { bookingId: info._id },
+    //   });
+
+    //   res.send({ url: session.url });
+    // });
     app.post("/create-checkout-session", verifyJWT, async (req, res) => {
-      const info = req.body;
-      const booking = await bookings.findOne({ _id: new ObjectId(info._id) });
-      if (!booking) return res.status(404).send({ message: "Booking not found" });
+  try {
+    const info = req.body;
 
-      if (booking.status !== "accepted") return res.status(400).send({ message: "Booking is not accepted yet" });
-      if (new Date(booking.departureTime) < new Date()) return res.status(400).send({ message: "Cannot pay, departure time passed" });
+    if (!info?._id) {
+      return res.status(400).send({ message: "Booking ID missing" });
+    }
 
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        line_items: [{
+    const booking = await bookings.findOne({
+      _id: new ObjectId(info._id),
+    });
+
+    if (!booking) {
+      return res.status(404).send({ message: "Booking not found" });
+    }
+
+    // ✅ Must be accepted by vendor
+    if (booking.status !== "accepted") {
+      return res.status(400).send({
+        message: "Booking is not accepted yet",
+      });
+    }
+
+    // ✅ Optional departure time check (safe)
+    if (
+      booking.departureTime &&
+      new Date(booking.departureTime) < new Date()
+    ) {
+      return res.status(400).send({
+        message: "Departure time already passed",
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+
+      line_items: [
+        {
           price_data: {
             currency: "usd",
-            unit_amount: info.price * 100,
-            product_data: { name: info.title, images: [info.image] }
+            unit_amount: Math.round(booking.ticketUnitPrice * 100),
+            product_data: {
+              name: booking.ticketTitle,
+            },
           },
-          quantity: info.quantity,
-        }],
-        mode: "payment",
-        success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.CLIENT_URL}/dashboard/my-bookings`,
-        customer_email: info.userEmail,
-        metadata: { bookingId: info._id },
-      });
+          quantity: booking.quantity,
+        },
+      ],
 
-      res.send({ url: session.url });
+      customer_email: booking.userEmail,
+
+      metadata: {
+        bookingId: booking._id.toString(),
+      },
+
+      success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_URL}/dashboard/my-bookings`,
     });
+
+    res.send({ url: session.url });
+
+  } catch (err) {
+    console.error("Stripe error:", err);
+    res.status(500).send({
+      message: "Failed to create checkout session",
+      error: err.message,
+    });
+  }
+});
+
 
 // ---------------------------
 // Stripe Payment Success
@@ -433,24 +504,21 @@ app.post("/payment-success", async (req, res) => {
     const { sessionId } = req.body;
     if (!sessionId) return res.status(400).send({ message: "Session ID required" });
 
-    // ১. স্ট্রাইপ থেকে সেশন রিট্রিভ করা
     const session = await stripe.checkout.sessions.retrieve(sessionId);
     const bookingId = session.metadata.bookingId;
     const transactionId = session.payment_intent;
 
-    // ২. চেক করা: এই ট্রানজ্যাকশন আইডি দিয়ে পেমেন্ট অলরেডি সেভ করা আছে কি না
     const existingPayment = await payments.findOne({ transactionId });
     if (existingPayment) {
       return res.send({ success: true, message: "Payment already recorded" });
     }
 
-    // ৩. বুকিংটি খুঁজে বের করা এবং চেক করা এটি অলরেডি 'paid' কি না
     const booking = await bookings.findOne({ _id: new ObjectId(bookingId) });
     if (!booking || booking.status === "paid") {
       return res.send({ success: true, message: "Booking already processed" });
     }
 
-    // ৪. পেমেন্ট ডকুমেন্ট তৈরি
+  
     const paymentDoc = {
       transactionId,
       email: booking.userEmail,
@@ -460,7 +528,7 @@ app.post("/payment-success", async (req, res) => {
       quantity: booking.quantity,
     };
 
-    // ৫. একসাথে পেমেন্ট সেভ করা এবং বুকিং স্ট্যাটাস আপডেট করা (Safe Execution)
+
     try {
       await payments.insertOne(paymentDoc);
       
