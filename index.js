@@ -10,7 +10,7 @@ const port = process.env.PORT || 3000;
 
 app.use(
   cors({
-    origin: [process.env.CLIENT_URL,'http://localhost:5173'],
+    origin: ["https://phenomenal-custard-25a583.netlify.app"],
     credentials: true,
     optionSuccessStatus: 200,
   })
@@ -53,7 +53,7 @@ async function run() {
     const users = db.collection("users");
 
 
-    await payments.createIndex({ transactionId: 1 }, { unique: true });
+    // await payments.createIndex({ transactionId: 1 }, { unique: true });
     /* ---------------------------
        Role Middleware (Admin)
     ----------------------------*/
