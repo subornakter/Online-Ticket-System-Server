@@ -17,9 +17,9 @@ app.use(
 );
 app.use(express.json());
 
-/* -----------------------------------
-   Firebase Admin JWT Verification
-------------------------------------- */
+
+  //  Firebase Admin JWT Verification
+
 const decodedKey = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString("utf8");
 admin.initializeApp({
   credential: admin.credential.cert(JSON.parse(decodedKey)),
@@ -37,9 +37,8 @@ const verifyJWT = async (req, res, next) => {
   }
 };
 
-/* -----------------------------------
-    MongoDB Start
-------------------------------------- */
+    // MongoDB Start
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.r9l6yhe.mongodb.net/?appName=Cluster0`;
 const client = new MongoClient(uri, { serverApi: ServerApiVersion.v1 });
 
@@ -269,8 +268,8 @@ app.get("/tickets/search", verifyJWT, async (req, res) => {
 
     app.get("/tickets/latest", async (req, res) => {
   const result = await tickets.find({ status: "approved" })
-    .sort({ _id: -1 })  // latest first
-    .limit(8)           // only 6–8 tickets
+    .sort({ _id: -1 })  
+    .limit(8)         
     .toArray();
 
   res.send(result);
@@ -372,27 +371,41 @@ app.get("/vendor/revenue-overview", verifyJWT, async (req, res) => {
   try {
     const vendorEmail = req.tokenEmail;
 
-    // Total Tickets Added
-    const totalTicketsAdded = await tickets.countDocuments({ "seller.email": vendorEmail });
+    // 1️⃣ Tickets added by this vendor
+    const totalTicketsAdded = await tickets.countDocuments({
+      "seller.email": vendorEmail,
+    });
 
-    // Total Tickets Sold (bookings that are paid or accepted)
-    const soldBookings = await bookings.find({ ticketSellerEmail: vendorEmail, status: { $in: ["accepted", "paid"] } }).toArray();
-    const totalTicketsSold = soldBookings.reduce((sum, b) => sum + b.quantity, 0);
+    // 2️⃣ ONLY PAID bookings for this vendor
+    const paidBookings = await bookings.find({
+      ticketSellerEmail: vendorEmail,
+      status: "paid",
+    }).toArray();
 
-    // Total Revenue (sum of paid bookings)
-    const paidBookings = soldBookings.filter(b => b.status === "paid");
-    const totalRevenue = paidBookings.reduce((sum, b) => sum + (b.ticketUnitPrice * b.quantity), 0);
+    // 3️⃣ Total tickets sold (quantity sum)
+    const totalTicketsSold = paidBookings.reduce(
+      (sum, b) => sum + b.quantity,
+      0
+    );
+
+    // 4️⃣ Total revenue
+    const totalRevenue = paidBookings.reduce(
+      (sum, b) => sum + b.ticketUnitPrice * b.quantity,
+      0
+    );
 
     res.send({
       totalTicketsAdded,
       totalTicketsSold,
       totalRevenue,
     });
+
   } catch (err) {
-    console.log(err);
-    res.status(500).send({ message: "Failed to fetch revenue overview", error: err });
+    console.error("Vendor revenue error:", err);
+    res.status(500).send({ message: "Failed to fetch revenue overview" });
   }
 });
+
 
     /* ---------------------------
               Stripe Payment
@@ -480,8 +493,8 @@ app.get("/vendor/revenue-overview", verifyJWT, async (req, res) => {
         bookingId: booking._id.toString(),
       },
 
-      success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.CLIENT_URL}/dashboard/my-bookings`,
+      success_url: `https://phenomenal-custard-25a583.netlify.app/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `https://phenomenal-custard-25a583.netlify.app/dashboard/my-bookings`,
     });
 
     res.send({ url: session.url });
@@ -544,7 +557,6 @@ app.post("/payment-success", async (req, res) => {
 
       res.send({ success: true, message: "Payment processed successfully" });
     } catch (insertErr) {
-      // যদি ইনডেক্স ইউনিক হওয়ার কারণে এরর দেয় (Duplicate)
       if (insertErr.code === 11000) {
         return res.send({ success: true, message: "Duplicate payment ignored" });
       }
@@ -649,12 +661,12 @@ app.get("/vendor/stats/:email", verifyJWT, async (req, res) => {
     if (vendorEmail !== req.tokenEmail.toLowerCase())
       return res.status(403).send({ message: "Forbidden" });
 
-    // ✅ Tickets added by vendor
+    //  Tickets added by vendor
     const totalTicketsAdded = await tickets.countDocuments({
       "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" }
     });
 
-    // ✅ Tickets by status
+    // Tickets by status
     const approvedTickets = await tickets.countDocuments({
       "seller.email": { $regex: `^${vendorEmail}$`, $options: "i" },
       status: { $regex: /^approved$/i }
@@ -665,7 +677,7 @@ app.get("/vendor/stats/:email", verifyJWT, async (req, res) => {
       status: { $regex: /^pending$/i }
     });
 
-    // ✅ Bookings by this vendor
+    //Bookings by this vendor
     const allBookings = await bookings.find({
       ticketSellerEmail: { $regex: `^${vendorEmail}$`, $options: "i" }
     }).toArray();
@@ -678,14 +690,14 @@ app.get("/vendor/stats/:email", verifyJWT, async (req, res) => {
       b => b.status.toLowerCase() === "pending" || b.status.toLowerCase() === "accepted"
     );
 
-    // ✅ Total sold quantity and revenue (only paid bookings)
+    //  Total sold quantity and revenue (only paid bookings)
     const totalSoldQuantity = paidBookings.reduce((sum, b) => sum + b.quantity, 0);
     const totalRevenue = paidBookings.reduce(
       (sum, b) => sum + b.ticketUnitPrice * b.quantity,
       0
     );
 
-    // ✅ Transport type stats
+    //Transport type stats
     const transportTypes = ["bus", "plane", "launch", "train"];
     const transportStats = [];
     for (const type of transportTypes) {
@@ -696,7 +708,7 @@ app.get("/vendor/stats/:email", verifyJWT, async (req, res) => {
       transportStats.push({ type, count });
     }
 
-    // ✅ Send response
+    // Send response
     res.send({
       totalTicketsAdded,
       approvedTickets,
