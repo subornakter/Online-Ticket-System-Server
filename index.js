@@ -371,18 +371,18 @@ app.get("/vendor/revenue-overview", verifyJWT, async (req, res) => {
   try {
     const vendorEmail = req.tokenEmail;
 
-    // 1️⃣ Tickets added by this vendor
+    // 1️ Tickets added by this vendor
     const totalTicketsAdded = await tickets.countDocuments({
       "seller.email": vendorEmail,
     });
 
-    // 2️⃣ ONLY PAID bookings for this vendor
+    // 2️ONLY PAID bookings for this vendor
     const paidBookings = await bookings.find({
       ticketSellerEmail: vendorEmail,
       status: "paid",
     }).toArray();
 
-    // 3️⃣ Total tickets sold (quantity sum)
+    // 3 Total tickets sold (quantity sum)
     const totalTicketsSold = paidBookings.reduce(
       (sum, b) => sum + b.quantity,
       0
@@ -453,14 +453,14 @@ app.get("/vendor/revenue-overview", verifyJWT, async (req, res) => {
       return res.status(404).send({ message: "Booking not found" });
     }
 
-    // ✅ Must be accepted by vendor
+    //  Must be accepted by vendor
     if (booking.status !== "accepted") {
       return res.status(400).send({
         message: "Booking is not accepted yet",
       });
     }
 
-    // ✅ Optional departure time check (safe)
+    // Optional departure time check (safe)
     if (
       booking.departureTime &&
       new Date(booking.departureTime) < new Date()
@@ -509,9 +509,9 @@ app.get("/vendor/revenue-overview", verifyJWT, async (req, res) => {
 });
 
 
-// ---------------------------
+
 // Stripe Payment Success
-// ---------------------------
+
 app.post("/payment-success", async (req, res) => {
   try {
     const { sessionId } = req.body;
@@ -534,6 +534,7 @@ app.post("/payment-success", async (req, res) => {
   
     const paymentDoc = {
       transactionId,
+      sessionId,
       email: booking.userEmail,
       amount: session.amount_total / 100,
       title: booking.ticketTitle,
@@ -595,6 +596,31 @@ app.get("/transactions", verifyJWT, async (req, res) => {
     res.status(500).send({ message: "Failed to fetch transactions", error: err });
   }
 });
+
+app.get("/transaction/:id", verifyJWT, async (req, res) => {
+  try {
+    const id = req.params.id; 
+    const email = req.tokenEmail; 
+
+    const payment = await payments.findOne({ 
+      $or: [
+        { transactionId: id }, 
+        { sessionId: id } 
+      ], 
+      email 
+    });
+
+    if (!payment) {
+      return res.status(404).send({ message: "Receipt not found in database" });
+    }
+
+    res.send(payment);
+  } catch (err) {
+    console.error("Receipt fetch error:", err);
+    res.status(500).send({ message: "Internal server error", error: err.message });
+  }
+});
+
 
 app.get("/dashboard/customer-stats", verifyJWT, async (req, res) => {
   try {
@@ -690,7 +716,7 @@ app.get("/vendor/stats/:email", verifyJWT, async (req, res) => {
       b => b.status.toLowerCase() === "pending" || b.status.toLowerCase() === "accepted"
     );
 
-    //  Total sold quantity and revenue (only paid bookings)
+    //  Total sold quantity and revenue 
     const totalSoldQuantity = paidBookings.reduce((sum, b) => sum + b.quantity, 0);
     const totalRevenue = paidBookings.reduce(
       (sum, b) => sum + b.ticketUnitPrice * b.quantity,
@@ -728,11 +754,43 @@ app.get("/vendor/stats/:email", verifyJWT, async (req, res) => {
   }
 });
 
+// POST: Add a review
+app.post("/reviews", verifyJWT, async (req, res) => {
+  const review = req.body;
+  const email = req.tokenEmail;
+
+ 
+  const hasPaidBooking = await bookings.findOne({
+    userEmail: email,
+    ticketId: review.ticketId,
+    status: "paid"
+  });
+
+  if (!hasPaidBooking) {
+    return res.status(403).send({ message: "You can only review tickets you have purchased." });
+  }
+
+  const result = await db.collection("reviews").insertOne({
+    ...review,
+    userEmail: email,
+    createdAt: new Date()
+  });
+  res.send(result);
+});
+
+// GET: Get reviews for a specific ticket
+app.get("/reviews/:ticketId", async (req, res) => {
+  const ticketId = req.params.ticketId;
+  const result = await db.collection("reviews")
+    .find({ ticketId })
+    .sort({ createdAt: -1 })
+    .toArray();
+  res.send(result);
+});
 
 
 
-
-    console.log("Server Connected ✔");
+    console.log("Server Connected to MongoDB");
   } catch (err) {
     console.log(err);
   }
